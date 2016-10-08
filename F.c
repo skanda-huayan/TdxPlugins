@@ -1,5 +1,6 @@
 #include "F.h"
 #include "comm.h"
+#include "kdata.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -606,6 +607,9 @@ void GPStart_REF(int len, float* out, float* mid, float* up, float *ma5) {
 }
 
 //------------------------------------------------------------------------------
+extern void Download_REF(int len, float* out, float* in1, float* in2, float *ids);
+
+//------------------------------------------------------------------------------
 PluginTCalcFuncInfo g_CalcFuncSets[] = 
 {
 	{10,(pPluginFUNC)&Reset_REF},
@@ -632,6 +636,9 @@ PluginTCalcFuncInfo g_CalcFuncSets[] =
 	{100,(pPluginFUNC)&CalcTradeDayInfo_REF},
 	{101,(pPluginFUNC)&IsTradDay_REF},
 	{102,(pPluginFUNC)&IsTP_REF},
+	
+	{200,(pPluginFUNC)&Download_REF},
+	
 	{0,NULL},
 };
 

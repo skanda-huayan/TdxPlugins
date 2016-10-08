@@ -6,11 +6,21 @@
 #include <stdlib.h>
 #include <string.h>
 
+extern InitDownload();
+
 static char DLL_PATH[500];
+static void *TCP_ADDR[20];
+static int TCP_ADDR_NUM = 0;
 
 char *GetDllPath() {
 	return DLL_PATH;
 }
+
+void* GetTcpAddr(int id) {
+	return TCP_ADDR[id];
+}
+
+extern void TcpServerReply_CALL();
 
 //DLLIMPORT void HelloWorld () {}
 
@@ -24,14 +34,29 @@ BOOL APIENTRY DllMain (HINSTANCE hInst     /* Library instance handle. */ ,
 		p[1] = 0;
 	}
 	
-    switch (reason)
-    {
+	if (TCP_ADDR_NUM == 0) {
+		HMODULE mo = LoadLibrary("Tcp.dll");
+		TCP_ADDR[GTA_GET_TCP_RWBUF] = (void*)GetProcAddress(mo, "GetTcpRWBuf");
+		TCP_ADDR[GTA_TCP_SERVER_READ] = (void*)GetProcAddress(mo, "TcpServerRead");
+		TCP_ADDR[GTA_TCP_SERVER_WRITE] = (void*)GetProcAddress(mo, "TcpServerWrite");
+		TCP_ADDR[GTA_OPEN_TCP_SERVER_IN_THREAD] = (void*)GetProcAddress(mo, "OpenTcpServerInThread");
+		TCP_ADDR[GTA_CLOSE_TCP_SERVER] = (void*)GetProcAddress(mo, "CloseTcpServer");
+		TCP_ADDR_NUM = 5;
+		
+		OpenTcpServerInThread osp = (OpenTcpServerInThread)TCP_ADDR[GTA_OPEN_TCP_SERVER_IN_THREAD];
+		osp(8088, TcpServerReply_CALL);
+		InitDownload();
+	}
+	
+    switch (reason) {
       case DLL_PROCESS_ATTACH:
         break;
 
-      case DLL_PROCESS_DETACH:
+      case DLL_PROCESS_DETACH: {
+      	CloseTcpServer cts = (CloseTcpServer)TCP_ADDR[GTA_CLOSE_TCP_SERVER];
+      	cts();
         break;
-
+      }
       case DLL_THREAD_ATTACH:
         break;
 
