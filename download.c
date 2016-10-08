@@ -3,21 +3,34 @@
 #include "dll.h"
 #include <windows.h>
 
+void InitTcpServer();
+
 typedef struct _KLineHead {
 	int mCode;
 	int mNum;
 	KLineItem *mItems;
 } KLineHead;
 
+static void *TCP_ADDR[20];
+static int TCP_ADDR_NUM = 0;
+static HMODULE tcpModule;
+
+void* GetTcpAddr(int id) {
+	return TCP_ADDR[id];
+}
+
 static List *dwnDataList;
 
-#define DWN_ID_CODE_DATE 0
-#define DWN_ID_OPEN_CLOSE 1
-#define DWN_ID_LOW_HIGH 2
-#define DWN_ID_VOL 3
-#define DWN_ID_DIF_DEA 4
-#define DWN_ID_K_D 5
-#define DWN_ID_J  6
+#define DWN_ID_BEGIN 100
+#define DWN_ID_END 101
+
+#define DWN_ID_CODE_DATE 1
+#define DWN_ID_OPEN_CLOSE 2
+#define DWN_ID_LOW_HIGH 3
+#define DWN_ID_VOL 4
+#define DWN_ID_DIF_DEA 5
+#define DWN_ID_K_D 6
+#define DWN_ID_J  7
 
 int FindByCode(int code) {
 	if (dwnDataList == NULL) return -1;
@@ -45,6 +58,15 @@ void InitDownload() {
 static int curIdx;
 static KLineHead* curHead;
 static CRITICAL_SECTION dwnMutex;
+
+static void DoBeginEnd(int id) {
+	if (id == DWN_ID_BEGIN) {
+		EnterCriticalSection(&dwnMutex);
+		InitTcpServer();
+	} else {
+		LeaveCriticalSection(&dwnMutex);
+	}
+}
 
 static void DoCodeDate(int len, float* a, float* b) {
 	int code = (int)a[0];
@@ -103,14 +125,16 @@ static void DoJ(int len, float* a, float* b) {
 	for (int i = 0; i < len; ++i, ++p) {
 		p->mKdjItem.mJ = a[i];
 	}
-	LeaveCriticalSection(&dwnMutex);
 }
 
 void Download_REF(int len, float* out, float* a, float* b, float *ids) {
 	int id = (int)ids[0];
 	switch (id) {
+		case DWN_ID_BEGIN:
+		case DWN_ID_END:
+			DoBeginEnd(id);
+			break;	
 		case DWN_ID_CODE_DATE:
-			EnterCriticalSection(&dwnMutex);
 			DoCodeDate(len, a, b);
 			break;
 		case DWN_ID_OPEN_CLOSE:
@@ -149,6 +173,12 @@ int DoGetReply(int len, char *buf, TcpServerWrite tsw) {
 	return len;
 }
 
+int DoPing(int len, char *buf, TcpServerWrite tsw) {
+	sprintf(buf, "Ping OK");
+	len = tsw(strlen(buf));
+	return len;
+}
+
 void TcpServerReply_CALL() {
 	TcpServerRead tsr = (TcpServerRead)GetTcpAddr(GTA_TCP_SERVER_READ);
 	TcpServerWrite tsw = (TcpServerWrite)GetTcpAddr(GTA_TCP_SERVER_WRITE);
@@ -162,9 +192,53 @@ void TcpServerReply_CALL() {
 		if (strcmp(buf, "Get") == 0) {
 			len = DoGetReply(len, buf, tsw);
 			if (len <= 0) break;
+		} else if (strcmp(buf, "Ping") == 0) {
+			len = DoPing(len, buf, tsw);
+			if (len <= 0) break;
 		}
 	}
 }
+
+void InitTcpServer() {
+	if (TCP_ADDR_NUM != 0) {
+		return;
+	}
+	char logbuf[80];
+	char tcppath[100];
+	sprintf(tcppath, "%sTcp.dll", GetDllPath());
+	HMODULE mo = LoadLibrary(tcppath);
+	tcpModule = mo;
+	
+	sprintf(logbuf, "A. DllMain begin ...2  mo=%x", mo);
+	Log(logbuf);
+	
+	TCP_ADDR[GTA_GET_TCP_RWBUF] = (void*)GetProcAddress(mo, "GetTcpRWBuf");
+	TCP_ADDR[GTA_TCP_SERVER_READ] = (void*)GetProcAddress(mo, "TcpServerRead");
+	TCP_ADDR[GTA_TCP_SERVER_WRITE] = (void*)GetProcAddress(mo, "TcpServerWrite");
+	TCP_ADDR[GTA_OPEN_TCP_SERVER_IN_THREAD] = (void*)GetProcAddress(mo, "OpenTcpServerInThread");
+	TCP_ADDR[GTA_CLOSE_TCP_SERVER] = (void*)GetProcAddress(mo, "CloseTcpServer");
+	TCP_ADDR_NUM = 5;
+	
+	sprintf(logbuf, "A. DllMain begin ...3");
+	Log(logbuf);
+	
+	OpenTcpServerInThread osp = (OpenTcpServerInThread)TCP_ADDR[GTA_OPEN_TCP_SERVER_IN_THREAD];
+	
+	sprintf(logbuf, "A. DllMain begin ...4 osp=%x", osp);
+	Log(logbuf);
+	
+	osp(8088, TcpServerReply_CALL);
+	
+	sprintf(logbuf, "A. DllMain begin ...5");
+	Log(logbuf);
+	
+	InitDownload();
+	
+	sprintf(logbuf, "A. DllMain begin ...6");
+	Log(logbuf);
+}
+
+// -----------------------------------------------
 
 
 

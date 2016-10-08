@@ -6,21 +6,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-extern InitDownload();
-
+extern void InitDownload();
 static char DLL_PATH[500];
-static void *TCP_ADDR[20];
-static int TCP_ADDR_NUM = 0;
+
 
 char *GetDllPath() {
 	return DLL_PATH;
 }
-
-void* GetTcpAddr(int id) {
-	return TCP_ADDR[id];
-}
-
-extern void TcpServerReply_CALL();
 
 //DLLIMPORT void HelloWorld () {}
 
@@ -28,32 +20,22 @@ BOOL APIENTRY DllMain (HINSTANCE hInst     /* Library instance handle. */ ,
                        DWORD reason        /* Reason this function is being called. */ ,
                        LPVOID reserved     /* Not used. */ )
 {
+	char logbuf[30] = {0};
 	GetModuleFileName(hInst, DLL_PATH, sizeof(DLL_PATH));
 	char *p = strrchr(DLL_PATH, '\\');
 	if (p != NULL) {
 		p[1] = 0;
 	}
 	
-	if (TCP_ADDR_NUM == 0) {
-		HMODULE mo = LoadLibrary("Tcp.dll");
-		TCP_ADDR[GTA_GET_TCP_RWBUF] = (void*)GetProcAddress(mo, "GetTcpRWBuf");
-		TCP_ADDR[GTA_TCP_SERVER_READ] = (void*)GetProcAddress(mo, "TcpServerRead");
-		TCP_ADDR[GTA_TCP_SERVER_WRITE] = (void*)GetProcAddress(mo, "TcpServerWrite");
-		TCP_ADDR[GTA_OPEN_TCP_SERVER_IN_THREAD] = (void*)GetProcAddress(mo, "OpenTcpServerInThread");
-		TCP_ADDR[GTA_CLOSE_TCP_SERVER] = (void*)GetProcAddress(mo, "CloseTcpServer");
-		TCP_ADDR_NUM = 5;
-		
-		OpenTcpServerInThread osp = (OpenTcpServerInThread)TCP_ADDR[GTA_OPEN_TCP_SERVER_IN_THREAD];
-		osp(8088, TcpServerReply_CALL);
-		InitDownload();
-	}
+	sprintf(logbuf, "A. DllMain reason=%d ", reason);
+	Log(logbuf);
 	
     switch (reason) {
       case DLL_PROCESS_ATTACH:
         break;
 
       case DLL_PROCESS_DETACH: {
-      	CloseTcpServer cts = (CloseTcpServer)TCP_ADDR[GTA_CLOSE_TCP_SERVER];
+      	CloseTcpServer cts = (CloseTcpServer)GetTcpAddr(GTA_CLOSE_TCP_SERVER);
       	cts();
         break;
       }
@@ -63,7 +45,9 @@ BOOL APIENTRY DllMain (HINSTANCE hInst     /* Library instance handle. */ ,
       case DLL_THREAD_DETACH:
         break;
     }
-
+    
+    sprintf(logbuf, "A. DllMain END");
+	Log(logbuf);
     /* Returns TRUE on success, FALSE on failure */
     return TRUE;
 }
