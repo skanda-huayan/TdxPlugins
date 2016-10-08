@@ -2,6 +2,7 @@
 #include "comm.h"
 #include "dll.h"
 #include <windows.h>
+#include <stdio.h>
 
 void InitTcpServer();
 
@@ -31,10 +32,12 @@ static List *dwnDataList;
 #define DWN_ID_DIF_DEA 5
 #define DWN_ID_K_D 6
 #define DWN_ID_J  7
+#define DWN_ID_BOLL_UP_MID  8
+#define DWN_ID_BOLL_LOW  9
 
 int FindByCode(int code) {
 	if (dwnDataList == NULL) return -1;
-	int sz = dwnDataList->itemSize;
+	int sz = dwnDataList->size;
 	for (int i = 0; i < sz; ++i) {
 		KLineHead *hd = ListGet(dwnDataList, i);
 		if (hd->mCode == code)
@@ -50,14 +53,16 @@ int AddKLineHead(int len, int code) {
 	return dwnDataList->size - 1;
 }
 
-void InitDownload() {
-	if (dwnDataList == NULL) 
-		dwnDataList = ListNew(4000, sizeof(KLineHead));
-}
-
 static int curIdx;
 static KLineHead* curHead;
 static CRITICAL_SECTION dwnMutex;
+
+void InitDownload() {
+	if (dwnDataList == NULL) {
+		dwnDataList = ListNew(4000, sizeof(KLineHead));
+		InitializeCriticalSection(&dwnMutex);
+	}	
+}
 
 static void DoBeginEnd(int id) {
 	if (id == DWN_ID_BEGIN) {
@@ -127,6 +132,21 @@ static void DoJ(int len, float* a, float* b) {
 	}
 }
 
+static void DoBollUpMid(int len, float* a, float* b) {
+	KLineItem *p = curHead->mItems;
+	for (int i = 0; i < len; ++i, ++p) {
+		p->mBollItem.mUp = a[i];
+		p->mBollItem.mMid = b[i];
+	}
+}
+
+static void DoBollLow(int len, float* a, float* b) {
+	KLineItem *p = curHead->mItems;
+	for (int i = 0; i < len; ++i, ++p) {
+		p->mBollItem.mLow = a[i];
+	}
+}
+
 void Download_REF(int len, float* out, float* a, float* b, float *ids) {
 	int id = (int)ids[0];
 	switch (id) {
@@ -147,7 +167,7 @@ void Download_REF(int len, float* out, float* a, float* b, float *ids) {
 			DoVol(len, a, b);
 			break;
 		case DWN_ID_DIF_DEA:
-			DoLowHigh(len, a, b);
+			DoDifDea(len, a, b);
 			break;
 		case DWN_ID_K_D:
 			DoKD(len, a, b);
@@ -155,31 +175,47 @@ void Download_REF(int len, float* out, float* a, float* b, float *ids) {
 		case DWN_ID_J:
 			DoJ(len, a, b);
 			break;
+		case DWN_ID_BOLL_UP_MID:
+			DoBollUpMid(len, a, b);
+			break;
+		case DWN_ID_BOLL_LOW:
+			DoBollLow(len, a, b);
+			break;
 	}
 }
 
 int DoGetReply(int len, char *buf, TcpServerWrite tsw) {
+	LOG("[DoGetReply] len=%d {%s} ",len, buf);
+	int wlen = 0;
 	char *p = buf + 3;
 	while (*p == ' ') ++p;
 	int code = atoi(p);
-	if (code == 0) return 0;
-	if (dwnDataList == NULL) return 0;
+	LOG("[DoGetReply] code = %d ", code);
+	if (code == 0) goto _end;
+	if (dwnDataList == NULL) goto _end;
 	int idx = FindByCode(code);
-	if (idx < 0) return 0;
+	if (idx < 0) goto _end;
+	LOG("[DoGetReply] find idx = %d ", idx);
 	KLineHead *hd = (KLineHead*)ListGet(dwnDataList, idx);
-	len = hd->mNum * sizeof(KLineItem);
-	memcpy(buf, hd->mItems, len);
-	len = tsw(len);
-	return len;
+	wlen = hd->mNum * sizeof(KLineItem);
+	LOG("[DoGetReply] find code=%d num=%d", hd->mCode, hd->mNum);
+	memcpy(buf, hd->mItems, wlen);
+	
+	_end:
+	LOG("[DoGetReply] will write len=%d  sizeof(KLineItem)=%d", wlen, sizeof(KLineItem));
+	wlen = tsw(wlen);
+	LOG("[DoGetReply] already write len=%d", wlen);
+	return wlen <= 0 ? -1 : wlen;
 }
 
-int DoPing(int len, char *buf, TcpServerWrite tsw) {
+int DoPing(char *buf, TcpServerWrite tsw) {
 	sprintf(buf, "Ping OK");
-	len = tsw(strlen(buf));
-	return len;
+	int len = tsw(strlen(buf));
+	return len <= 0 ? -1 : len;
 }
 
 void TcpServerReply_CALL() {
+	LOG("[TcpServerReply_CALL] IN TID=%d ", GetCurrentThreadId());
 	TcpServerRead tsr = (TcpServerRead)GetTcpAddr(GTA_TCP_SERVER_READ);
 	TcpServerWrite tsw = (TcpServerWrite)GetTcpAddr(GTA_TCP_SERVER_WRITE);
 	GetTcpRWBuf gtb = (GetTcpRWBuf)GetTcpAddr(GTA_GET_TCP_RWBUF);
@@ -189,28 +225,32 @@ void TcpServerReply_CALL() {
 		int len = tsr();
 		if (len <= 0) break;
 		buf[len] = 0;
-		if (strcmp(buf, "Get") == 0) {
+		if (memcmp(buf, "Get", 3) == 0) {
 			len = DoGetReply(len, buf, tsw);
-			if (len <= 0) break;
-		} else if (strcmp(buf, "Ping") == 0) {
-			len = DoPing(len, buf, tsw);
+			if (len < 0) break;
+		} else if (memcmp(buf, "Ping", 4) == 0) {
+			len = DoPing(buf, tsw);
+			if (len < 0) break;
+		} else {
+			strcat(buf, "\n[Invaide cmd]");
+			len = tsw(strlen(buf));
 			if (len <= 0) break;
 		}
 	}
+	LOG("[TcpServerReply_CALL] OUT TID=%d ", GetCurrentThreadId());
 }
 
 void InitTcpServer() {
 	if (TCP_ADDR_NUM != 0) {
 		return;
 	}
-	char logbuf[80];
+	LOG("A. InitTcpServer ...1 TID=%d", GetCurrentThreadId());
 	char tcppath[100];
 	sprintf(tcppath, "%sTcp.dll", GetDllPath());
 	HMODULE mo = LoadLibrary(tcppath);
 	tcpModule = mo;
 	
-	sprintf(logbuf, "A. DllMain begin ...2  mo=%x", mo);
-	Log(logbuf);
+	LOG("A. InitTcpServer ...2  mo=%x ", mo);
 	
 	TCP_ADDR[GTA_GET_TCP_RWBUF] = (void*)GetProcAddress(mo, "GetTcpRWBuf");
 	TCP_ADDR[GTA_TCP_SERVER_READ] = (void*)GetProcAddress(mo, "TcpServerRead");
@@ -219,23 +259,15 @@ void InitTcpServer() {
 	TCP_ADDR[GTA_CLOSE_TCP_SERVER] = (void*)GetProcAddress(mo, "CloseTcpServer");
 	TCP_ADDR_NUM = 5;
 	
-	sprintf(logbuf, "A. DllMain begin ...3");
-	Log(logbuf);
+	LOG("A. InitTcpServer ...3");
 	
 	OpenTcpServerInThread osp = (OpenTcpServerInThread)TCP_ADDR[GTA_OPEN_TCP_SERVER_IN_THREAD];
 	
-	sprintf(logbuf, "A. DllMain begin ...4 osp=%x", osp);
-	Log(logbuf);
+	LOG("A. InitTcpServer ...4 osp=%x", osp);
 	
 	osp(8088, TcpServerReply_CALL);
 	
-	sprintf(logbuf, "A. DllMain begin ...5");
-	Log(logbuf);
-	
-	InitDownload();
-	
-	sprintf(logbuf, "A. DllMain begin ...6");
-	Log(logbuf);
+	LOG("A. InitTcpServer ...end");
 }
 
 // -----------------------------------------------

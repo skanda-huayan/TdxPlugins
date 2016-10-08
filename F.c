@@ -651,6 +651,7 @@ DLLIMPORT BOOL RegisterTdxFunc(PluginTCalcFuncInfo** pFun)
 		InitializeCriticalSection(&si.mutex);
 		InitializeCriticalSection(&bollSK.mutex);
 		InitializeCriticalSection(&start.mutex);
+		InitDownload();
 		return TRUE;
 	}
 	

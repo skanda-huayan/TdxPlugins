@@ -69,6 +69,8 @@ void *ListGet(List *v, int idx) {
 
 static int openIO = 0;
 static HANDLE io = NULL;
+char LOGBUF[200];
+
 void Log(char *buf) {
 	if (!openIO) {
 		openIO = 1;

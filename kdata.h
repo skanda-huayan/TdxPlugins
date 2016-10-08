@@ -11,6 +11,12 @@ typedef struct _MacdItem {
 	float mDea;
 } MacdItem;
 
+typedef struct _BollItem {
+	float mUp;
+	float mMid;
+	float mLow;
+} BollItem;
+
 typedef struct _KItem {
 	int mDate;	// YYYYMMDD
 	float mOpen;
@@ -25,6 +31,7 @@ typedef struct _KLineItem {
 	KItem mKItem;
 	MacdItem mMacdItem;
 	KdjItem mKdjItem;
+	BollItem mBollItem;
 } KLineItem;
 
 
