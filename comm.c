@@ -71,7 +71,7 @@ static int openIO = 0;
 static HANDLE io = NULL;
 char LOGBUF[200];
 
-void Log(char *buf) {
+void XLog(char *buf) {
 	if (!openIO) {
 		openIO = 1;
 		AllocConsole();

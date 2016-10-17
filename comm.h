@@ -30,8 +30,8 @@ int ListIndexOf(List *v, void *item);
 void *ListGet(List *v, int idx);
 
 extern char LOGBUF[];
-void Log(char *buf);
-#define LOG(s, ...) sprintf(LOGBUF, s, ##__VA_ARGS__); Log(LOGBUF);
+void XLog(char *buf);
+#define XLOG(s, ...) sprintf(LOGBUF, s, ##__VA_ARGS__); XLog(LOGBUF);
 
 void InitHolidays();
 

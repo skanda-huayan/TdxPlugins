@@ -185,26 +185,20 @@ void Download_REF(int len, float* out, float* a, float* b, float *ids) {
 }
 
 int DoGetReply(int len, char *buf, TcpServerWrite tsw) {
-	LOG("[DoGetReply] len=%d {%s} ",len, buf);
 	int wlen = 0;
 	char *p = buf + 3;
 	while (*p == ' ') ++p;
 	int code = atoi(p);
-	LOG("[DoGetReply] code = %d ", code);
 	if (code == 0) goto _end;
 	if (dwnDataList == NULL) goto _end;
 	int idx = FindByCode(code);
 	if (idx < 0) goto _end;
-	LOG("[DoGetReply] find idx = %d ", idx);
 	KLineHead *hd = (KLineHead*)ListGet(dwnDataList, idx);
 	wlen = hd->mNum * sizeof(KLineItem);
-	LOG("[DoGetReply] find code=%d num=%d", hd->mCode, hd->mNum);
 	memcpy(buf, hd->mItems, wlen);
 	
 	_end:
-	LOG("[DoGetReply] will write len=%d  sizeof(KLineItem)=%d", wlen, sizeof(KLineItem));
 	wlen = tsw(wlen);
-	LOG("[DoGetReply] already write len=%d", wlen);
 	return wlen <= 0 ? -1 : wlen;
 }
 
@@ -215,7 +209,6 @@ int DoPing(char *buf, TcpServerWrite tsw) {
 }
 
 void TcpServerReply_CALL() {
-	LOG("[TcpServerReply_CALL] IN TID=%d ", GetCurrentThreadId());
 	TcpServerRead tsr = (TcpServerRead)GetTcpAddr(GTA_TCP_SERVER_READ);
 	TcpServerWrite tsw = (TcpServerWrite)GetTcpAddr(GTA_TCP_SERVER_WRITE);
 	GetTcpRWBuf gtb = (GetTcpRWBuf)GetTcpAddr(GTA_GET_TCP_RWBUF);
@@ -237,20 +230,16 @@ void TcpServerReply_CALL() {
 			if (len <= 0) break;
 		}
 	}
-	LOG("[TcpServerReply_CALL] OUT TID=%d ", GetCurrentThreadId());
 }
 
 void InitTcpServer() {
 	if (TCP_ADDR_NUM != 0) {
 		return;
 	}
-	LOG("A. InitTcpServer ...1 TID=%d", GetCurrentThreadId());
 	char tcppath[100];
 	sprintf(tcppath, "%sTcp.dll", GetDllPath());
 	HMODULE mo = LoadLibrary(tcppath);
 	tcpModule = mo;
-	
-	LOG("A. InitTcpServer ...2  mo=%x ", mo);
 	
 	TCP_ADDR[GTA_GET_TCP_RWBUF] = (void*)GetProcAddress(mo, "GetTcpRWBuf");
 	TCP_ADDR[GTA_TCP_SERVER_READ] = (void*)GetProcAddress(mo, "TcpServerRead");
@@ -258,16 +247,8 @@ void InitTcpServer() {
 	TCP_ADDR[GTA_OPEN_TCP_SERVER_IN_THREAD] = (void*)GetProcAddress(mo, "OpenTcpServerInThread");
 	TCP_ADDR[GTA_CLOSE_TCP_SERVER] = (void*)GetProcAddress(mo, "CloseTcpServer");
 	TCP_ADDR_NUM = 5;
-	
-	LOG("A. InitTcpServer ...3");
-	
 	OpenTcpServerInThread osp = (OpenTcpServerInThread)TCP_ADDR[GTA_OPEN_TCP_SERVER_IN_THREAD];
-	
-	LOG("A. InitTcpServer ...4 osp=%x", osp);
-	
 	osp(8088, TcpServerReply_CALL);
-	
-	LOG("A. InitTcpServer ...end");
 }
 
 // -----------------------------------------------

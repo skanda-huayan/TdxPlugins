@@ -357,6 +357,29 @@ void IsTP_REF(int len, float* out, float* date, float* vol, float* c) {
 }
 
 //------------------------------------------------------------------------------
+// 最近N日内复牌股停止交易日数 out = [日数] 
+void IsNFP_REF(int len, float* out, float* date, float* n, float* vol) {
+	int nd = (int)n[0];
+	if (len < nd + 1) {
+		out[len - 1] = 0;
+		return;
+	}
+	
+	IsTP_REF(len, out, date, vol, NULL);
+	if (out[len-1] == 1) { //停牌股 
+		out[len - 1] = 0;
+		return;
+	}
+	
+	int last = GetLastTradeDay();
+	int firstDay = (int)date[len - nd - 1]+ 19000000;
+	int lastDay = (int)date[len - 1]+ 19000000;
+	int days = GetTradeDayBetween(firstDay, lastDay);
+	int re = days - nd - 1;
+	out[len - 1] = re;
+}
+
+//------------------------------------------------------------------------------
 // .401 排序信息 
 typedef struct _SortInfo {
 	int code;  //股票代码
@@ -423,7 +446,7 @@ static void SetSortInfo(int len, int code, float val, int* firstIdx, List *list)
 			ListAdd(list, &info);
 		} else {
 			sprintf(buf, "SetSortInfo Error: before = -1  code = %d val=%f", info.code, info.val);
-			Log(buf);
+			XLog(buf);
 		}
 	}
 }
@@ -636,6 +659,7 @@ PluginTCalcFuncInfo g_CalcFuncSets[] =
 	{100,(pPluginFUNC)&CalcTradeDayInfo_REF},
 	{101,(pPluginFUNC)&IsTradDay_REF},
 	{102,(pPluginFUNC)&IsTP_REF},
+	{103,(pPluginFUNC)&IsNFP_REF},
 	
 	{200,(pPluginFUNC)&Download_REF},
 	
