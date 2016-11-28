@@ -9,9 +9,9 @@ Libs=
 PrivateResource=
 ResourceIncludes=
 MakeIncludes=
-Compiler=-DBUILDING_DLL=1_@@_
-CppCompiler=-DBUILDING_DLL=1_@@_
-Linker=--no-export-all-symbols --add-stdcall-alias_@@_
+Compiler=-DBUILDING_DLL=1
+CppCompiler=-DBUILDING_DLL=1
+Linker=
 IsCpp=0
 Icon=
 ExeOutput=
@@ -19,16 +19,16 @@ ObjectOutput=
 LogOutput=
 LogOutputEnabled=0
 OverrideOutput=0
-OverrideOutputName=TdxPlugin3.dll
+OverrideOutputName=
 HostApplication=
-Folders=
-CommandLine=
 UseCustomMakefile=0
 CustomMakefile=
+CommandLine=
+Folders=
 IncludeVersionInfo=0
 SupportXPThemes=0
-CompilerSet=0
-CompilerSettings=0000000000000000000000000
+CompilerSet=3
+CompilerSettings=0000000100000000000000000
 UnitCount=8
 
 [VersionInfo]
@@ -39,14 +39,14 @@ Build=0
 LanguageID=1033
 CharsetID=1252
 CompanyName=
-FileVersion=1.0.0.0
+FileVersion=
 FileDescription=Developed using the Dev-C++ IDE
 InternalName=
 LegalCopyright=
 LegalTrademarks=
 OriginalFilename=
 ProductName=
-ProductVersion=1.0.0.0
+ProductVersion=
 AutoIncBuildNr=0
 SyncProduct=1
 
@@ -61,9 +61,9 @@ OverrideBuildCmd=0
 BuildCmd=
 
 [Unit2]
-FileName=comm.c
+FileName=dll.h
 CompileCpp=0
-Folder=TdxPlugin
+Folder=
 Compile=1
 Link=1
 Priority=1000
@@ -71,9 +71,9 @@ OverrideBuildCmd=0
 BuildCmd=
 
 [Unit3]
-FileName=comm.h
+FileName=comm.c
 CompileCpp=0
-Folder=TdxPlugin
+Folder=
 Compile=1
 Link=1
 Priority=1000
@@ -81,9 +81,9 @@ OverrideBuildCmd=0
 BuildCmd=
 
 [Unit4]
-FileName=dll.h
+FileName=comm.h
 CompileCpp=0
-Folder=TdxPlugin
+Folder=
 Compile=1
 Link=1
 Priority=1000
@@ -91,26 +91,6 @@ OverrideBuildCmd=0
 BuildCmd=
 
 [Unit5]
-FileName=F.c
-CompileCpp=0
-Folder=TdxPlugin
-Compile=1
-Link=1
-Priority=1000
-OverrideBuildCmd=0
-BuildCmd=
-
-[Unit6]
-FileName=F.h
-CompileCpp=0
-Folder=TdxPlugin
-Compile=1
-Link=1
-Priority=1000
-OverrideBuildCmd=0
-BuildCmd=
-
-[Unit8]
 FileName=download.c
 CompileCpp=0
 Folder=
@@ -120,28 +100,8 @@ Priority=1000
 OverrideBuildCmd=0
 BuildCmd=
 
-[Unit9]
-FileName=kdata.h
-CompileCpp=0
-Folder=TdxPlugin
-Compile=1
-Link=1
-Priority=1000
-OverrideBuildCmd=0
-BuildCmd=
-
-[Unit11]
-FileName=tcp.h
-CompileCpp=0
-Folder=TdxPlugin
-Compile=1
-Link=1
-Priority=1000
-OverrideBuildCmd=0
-BuildCmd=
-
-[Unit10]
-FileName=download.c
+[Unit6]
+FileName=F.c
 CompileCpp=0
 Folder=
 Compile=1
@@ -151,9 +111,19 @@ OverrideBuildCmd=0
 BuildCmd=
 
 [Unit7]
+FileName=F.h
+CompileCpp=0
+Folder=
+Compile=1
+Link=1
+Priority=1000
+OverrideBuildCmd=0
+BuildCmd=
+
+[Unit8]
 FileName=kdata.h
 CompileCpp=0
-Folder=TdxPlugin
+Folder=
 Compile=1
 Link=1
 Priority=1000
