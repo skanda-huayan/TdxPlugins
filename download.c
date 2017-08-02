@@ -4,21 +4,26 @@
 #include <windows.h>
 #include <stdio.h>
 
-void InitTcpServer();
+typedef struct _TcpServer TcpServer;
+typedef void (*TcpServerReply)(TcpServer*);
+typedef void* (*TcpGetRWBuf)();
+typedef int (*TcpServerRead)(TcpServer*);
+typedef int (*TcpServerWrite)(TcpServer*, int len);
+typedef void (*TcpOpenServer)(int serverPort, TcpServerReply reply, int blockMode);
+typedef int (*TcpInit)(int size);
+
+struct _Tcp {
+	HMODULE module;
+	TcpGetRWBuf getRWBuf;
+	TcpServerRead read;
+	TcpServerWrite write;
+} TcpObj;
 
 typedef struct _KLineHead {
     int mCode;
     int mNum;
     KLineItem *mItems;
 } KLineHead;
-
-static void *TCP_ADDR[20];
-static int TCP_ADDR_NUM = 0;
-static HMODULE tcpModule;
-
-void* GetTcpAddr(int id) {
-    return TCP_ADDR[id];
-}
 
 static List *dwnDataList;
 
@@ -34,6 +39,10 @@ static List *dwnDataList;
 #define DWN_ID_J  7
 #define DWN_ID_BOLL_UP_MID  8
 #define DWN_ID_BOLL_LOW  9
+
+#define CMD_LEN 32
+
+void InitTcpServer();
 
 int FindByCode(int code) {
     if (dwnDataList == NULL) return -1;
@@ -59,9 +68,15 @@ static CRITICAL_SECTION dwnMutex;
 
 void InitDownload() {
     if (dwnDataList == NULL) {
-        dwnDataList = ListNew(4000, sizeof (KLineHead));
+        dwnDataList = ListNew(5000, sizeof (KLineHead));
         InitializeCriticalSection(&dwnMutex);
     }
+}
+
+void UnInitDownload() {
+	if (TcpObj.module)
+		FreeLibrary(TcpObj.module);
+	TcpObj.module = 0;
 }
 
 static void DoBeginEnd(int id) {
@@ -184,71 +199,158 @@ void Download_REF(int len, float* out, float* a, float* b, float *ids) {
     }
 }
 
-int DoGetReply(int len, char *buf, TcpServerWrite tsw) {
+int CopyData(KLineHead *hd, int fromDay, BOOL zb, char *buf) {
+	KLineItem *items = hd->mItems;
+	int begin = 0;
+	for (int i = hd->mNum - 1; i >= 0; --i) {
+		int day = items[i].mKItem.mDate;
+		if (day == fromDay) {
+			begin = i;
+			break;
+		} else if (day < fromDay) {
+			begin = i + 1;
+			break;
+		}
+	}
+	
+	int num = hd->mNum - begin;
+	if (num < 0) num = 0;
+	memcpy(buf, &hd->mCode, 4);
+    memcpy(buf + 4, &num, 4);
+    memcpy(buf + 8, &hd->mNum, 4);
+	buf += 12;
+	KLineItem *zbbuf = (KLineItem *)buf;
+	KItem *kbuf = (KItem*)buf;
+	
+	for (int i = begin; i < hd->mNum; ++i) {
+		if (zb) {
+			*zbbuf++ = items[i];
+		} else {
+			*kbuf++ = items[i].mKItem;
+		}
+	}
+	return 12 + num * (zb ? sizeof(KLineItem) : sizeof(KItem));
+}
+
+int DoGetByCodeReply(char *buf) {
     int wlen = 0;
-    char *p = buf + 3;
-    while (*p == ' ') ++p;
-    int code = atoi(p);
+    char *p = buf + CMD_LEN;
+    int code = *(int*)p;
+    p += 4;
     if (code == 0) goto _end;
     if (dwnDataList == NULL) goto _end;
     int idx = FindByCode(code);
     if (idx < 0) goto _end;
+    int fromDay = *(int*)p;
+    p += 4;
+    int zb = *(int*)p;
+    
     KLineHead *hd = (KLineHead*) ListGet(dwnDataList, idx);
-    wlen = hd->mNum * sizeof (KLineItem);
-    memcpy(buf, hd->mItems, wlen);
+    wlen = CopyData(hd, fromDay, zb, buf);
 
 _end:
-    wlen = tsw(wlen);
-    return wlen <= 0 ? -1 : wlen;
+    return wlen;
 }
 
-int DoPing(char *buf, TcpServerWrite tsw) {
+int DoGetNumReply(char *buf) {
+	*(int*)buf = dwnDataList->size;
+    return sizeof(int);
+}
+
+int DoGetByRangeReply(char *buf) {
+    int wlen = 0;
+    char *p = buf + CMD_LEN;
+    int beginIdx = *(int*)p;
+    p += 4;
+    int endIdx = *(int*)p;
+    p += 4;
+    if (dwnDataList == NULL) goto _end;
+    if (beginIdx < 0 || endIdx < 0) goto _end;
+    int fromDay = *(int*)p;
+    p += 4;
+    int zb = *(int*)p;
+    if (endIdx >= dwnDataList->size) endIdx = dwnDataList->size - 1;
+    
+    *(int*)buf = endIdx - beginIdx + 1;
+    wlen = 4;
+    for (int i = beginIdx; i <= endIdx; ++i) {
+    	KLineHead *hd = (KLineHead*) ListGet(dwnDataList, i);
+    	wlen += CopyData(hd, fromDay, zb, buf + wlen);
+	}
+	//printf("Range: %d - %d \n", beginIdx, endIdx);
+
+_end:
+    return wlen;
+}
+
+int DoGetByIdxReply(char *buf) {
+    int wlen = 0;
+    char *p = buf + CMD_LEN;
+    int idx = *(int*)p;
+    p += 4;
+    if (dwnDataList == NULL) goto _end;
+    if (idx < 0) goto _end;
+    int fromDay = *(int*)p;
+    p += 4;
+    int zb = *(int*)p;
+
+    KLineHead *hd = (KLineHead*) ListGet(dwnDataList, idx);
+    wlen = CopyData(hd, fromDay, zb, buf);
+
+_end:
+    return wlen;
+}
+
+int DoPing(char *buf) {
     sprintf(buf, "Ping OK");
-    int len = tsw(strlen(buf));
-    return len <= 0 ? -1 : len;
+    int len = strlen(buf) + 1;
+    return len;
 }
 
-void TcpServerReply_CALL() {
-    TcpServerRead tsr = (TcpServerRead) GetTcpAddr(GTA_TCP_SERVER_READ);
-    TcpServerWrite tsw = (TcpServerWrite) GetTcpAddr(GTA_TCP_SERVER_WRITE);
-    GetTcpRWBuf gtb = (GetTcpRWBuf) GetTcpAddr(GTA_GET_TCP_RWBUF);
-    char *buf = (char*) gtb();
+void TcpServerReply_CALL(TcpServer* svr) {
+    char *buf = (char*) TcpObj.getRWBuf();
 
+	// Get-By-Idx/Get-By-Code : {char[32]:cmd, int:code/idx, int:fromDay, int:zb}
+	// Get-By-Range : {char[32]:cmd, int:beginIdx, int:endIdx, int:fromDay, int:zb}
     while (1) {
-        int len = tsr();
+        int len = TcpObj.read(svr);
         if (len <= 0) break;
         buf[len] = 0;
-        if (memcmp(buf, "Get", 3) == 0) {
-            len = DoGetReply(len, buf, tsw);
-            if (len < 0) break;
-        } else if (memcmp(buf, "Ping", 4) == 0) {
-            len = DoPing(buf, tsw);
-            if (len < 0) break;
-        } else {
-            strcat(buf, "\n[Invaide cmd]");
-            len = tsw(strlen(buf));
-            if (len <= 0) break;
+        //printf("    read: [%s] len=%d \n", buf, len);
+        len = 0;
+        if (strcmp(buf, "Get-By-Code") == 0) {
+            len = DoGetByCodeReply(buf);
+        } else if (strcmp(buf, "Get-Num") == 0) {
+            len = DoGetNumReply(buf);
+        } else if (strcmp(buf, "Get-By-Idx") == 0) {
+            len = DoGetByIdxReply(buf);
+        } else if (strcmp(buf, "Get-By-Range") == 0) {
+            len = DoGetByRangeReply( buf);
         }
+		int len2 = TcpObj.write(svr, len);
+		//printf("    write: len=%d len2=%d \n", len, len2);
+        if (len2 <= 0) break;
     }
 }
 
 void InitTcpServer() {
-    if (TCP_ADDR_NUM != 0) {
+	static BOOL inited = FALSE;
+    if (inited) {
         return;
     }
+	//OpenIO();
+    inited = TRUE;
     char tcppath[100];
     sprintf(tcppath, "%sTcp.dll", GetDllPath());
     HMODULE mo = LoadLibrary(tcppath);
-    tcpModule = mo;
-
-    TCP_ADDR[GTA_GET_TCP_RWBUF] = (void*) GetProcAddress(mo, "GetTcpRWBuf");
-    TCP_ADDR[GTA_TCP_SERVER_READ] = (void*) GetProcAddress(mo, "TcpServerRead");
-    TCP_ADDR[GTA_TCP_SERVER_WRITE] = (void*) GetProcAddress(mo, "TcpServerWrite");
-    TCP_ADDR[GTA_OPEN_TCP_SERVER_IN_THREAD] = (void*) GetProcAddress(mo, "OpenTcpServerInThread");
-    TCP_ADDR[GTA_CLOSE_TCP_SERVER] = (void*) GetProcAddress(mo, "CloseTcpServer");
-    TCP_ADDR_NUM = 5;
-    OpenTcpServerInThread osp = (OpenTcpServerInThread) TCP_ADDR[GTA_OPEN_TCP_SERVER_IN_THREAD];
-    osp(8088, TcpServerReply_CALL);
+    TcpObj.module = mo;
+    TcpObj.getRWBuf = (TcpGetRWBuf)GetProcAddress(mo, "TcpGetRWBuf");
+    TcpObj.read = (TcpServerRead)GetProcAddress(mo, "TcpServerRead");
+    TcpObj.write = (TcpServerWrite)GetProcAddress(mo, "TcpServerWrite");
+    TcpInit init = (TcpInit)GetProcAddress(mo, "TcpInit");
+    TcpOpenServer openSvr = (TcpOpenServer)GetProcAddress(mo, "TcpOpenServer");
+    init(1024 * 1024);
+    openSvr(8088, TcpServerReply_CALL, 0);
 }
 
 // -----------------------------------------------

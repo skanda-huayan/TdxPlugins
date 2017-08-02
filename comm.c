@@ -65,20 +65,12 @@ void *ListGet(List *v, int idx) {
 }
 
 // -------------------------------------------------------------------------------
-
-static int openIO = 0;
-static HANDLE io = NULL;
-char LOGBUF[200];
-
-void XLog(char *buf) {
-    if (!openIO) {
-        openIO = 1;
-        AllocConsole();
-        io = GetStdHandle(STD_OUTPUT_HANDLE);
-    }
-    strcat(buf, "\n");
-    WriteConsole(io, buf, strlen(buf), NULL, NULL);
-    buf[0] = '\0';
+void OpenIO() {
+	static int init = 0;
+	if (init) return;
+	init = 1;
+    AllocConsole();
+    freopen("CONOUT$", "wb", stdout);
 }
 
 //--------------------------------------------------------------------------------

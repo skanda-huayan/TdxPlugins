@@ -8,7 +8,9 @@
 
 extern void InitDownload();
 static char DLL_PATH[500];
-
+extern void InitThsModule(int attatch);
+extern void UnloadTdxZJModule();
+extern void UnInitDownload();
 
 char *GetDllPath() {
 	return DLL_PATH;
@@ -30,12 +32,11 @@ BOOL APIENTRY DllMain (HINSTANCE hInst     /* Library instance handle. */ ,
       case DLL_PROCESS_ATTACH:
         break;
 
-      case DLL_PROCESS_DETACH: {
-      	// 在此运行不过 
-      	//CloseTcpServer cts = (CloseTcpServer)GetTcpAddr(GTA_CLOSE_TCP_SERVER);
-      	//cts();
+      case DLL_PROCESS_DETACH:
+      	UnloadTdxZJModule();
+      	//UnInitDownload();
         break;
-      }
+        
       case DLL_THREAD_ATTACH:
         break;
 

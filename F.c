@@ -15,12 +15,33 @@ typedef struct _KMInfo {
     int code;
 } KMInfo;
 
+CRITICAL_SECTION commMutex;
+
 KMInfo di = {0};
+
+void BeginLock_REF(int len, float* out, float* a, float* b, float* c) {
+    EnterCriticalSection(&commMutex);
+}
+
+void EndLock_REF(int len, float* out, float* a, float* b, float* c) {
+    LeaveCriticalSection(&commMutex);
+}
 
 void Reset_REF(int len, float* out, float* rLen, float* code, float* tmp) {
     memset(buf, 0, sizeof buf);
     di.dateLen = (int) rLen[0];
     di.code = (int) code[0];
+}
+
+// 近回idx属于[from, to]时， a 上穿 b 的idx
+// 若未上穿时，返回-1
+int GetCrossAB(float *a, float *b, int from, int to) {
+	for (int i = from; i < to; ++i) {
+		if (a[i] < b[i] && a[i + 1] >= b[i + 1]) {
+			return i + 1;
+		}
+	}
+	return -1;
 }
 
 // MACD 底背离
@@ -123,221 +144,7 @@ void CalcMaxZF_REF(int len, float* pfOUT, float* days, float* close, float* code
     pfOUT[len - 1] = (maxVal - minVal) * 100 / minVal;
 }
 
-// -----------------------------------------------------------------------------
-
-typedef struct _XtInfo {
-    int beginPos; // 形态开始位置
-    int endPos;
-    int dir; // 方向 0:未知  1:上升  2:下降  3:横盘
-    int beginVal;
-    int endVal;
-} XtInfo;
-
-#define GET_DIR(b, e) (b == e ? 3 : (b < e ? 1 : 2))
-
-// 锟获取形态的震幅 %
-static float _GetXtZF(float from, float to) {
-    float a = GET_MIN(from, to);
-    float b = GET_MAX(from, to);
-    return (b - a) * 100 / a;
-}
-
-// 是否是很小的形态
-static int _IsSmallXt(XtInfo *p) {
-    float zf = _GetXtZF(p->beginVal, p->endVal);
-    int days = p->endPos - p->beginPos + 1;
-    //区间段震幅小于1.5% ；区间段天数小于4天的
-    if (zf < 1.5 /*&& days < 4*/)
-        return 1;
-
-    return 0;
-}
-
-// 获取下一个大形态；若没有，则返回-1
-static int _GetNextLargeXtIndex(List *xtList, int from) {
-    for (int i = from; i < xtList->size; ++i) {
-        XtInfo *p = (XtInfo*) ListGet(xtList, i);
-        if (!_IsSmallXt(p)) return i;
-    }
-    return -1;
-}
-
-static int _TryMergeXt(List *mrgList, List *xtList, int beginIdx) {
-    XtInfo* mlx = ListGet(mrgList, mrgList->size - 1);
-    XtInfo xt = {0};
-    XtInfo* p = (XtInfo*) ListGet(xtList, beginIdx);
-    memcpy(&xt, p, sizeof (XtInfo));
-    int largeIdx = _GetNextLargeXtIndex(xtList, beginIdx);
-    if (largeIdx == -1) largeIdx = xtList->size;
-
-    int i = beginIdx + 1;
-    for (; i < largeIdx; ++i) {
-        p = (XtInfo*) ListGet(xtList, i);
-        if (_GetXtZF(xt.beginVal, p->endVal) > 2) {
-            break;
-        }
-    }
-    --i;
-    p = (XtInfo*) ListGet(xtList, i);
-    xt.endPos = p->endPos;
-    xt.endVal = p->endVal;
-    if (i != beginIdx)
-        xt.dir = 3;
-    ListAdd(mrgList, &xt);
-    return i;
-}
-
-// 合并形态
-static void ___MeargeXtList(List *xtList, List *xtMergedList) {
-    for (int i = 0; i < xtList->size; ++i) {
-        XtInfo *p = (XtInfo*) ListGet(xtList, i);
-        if (i == 0) {
-            ListAdd(xtMergedList, p);
-        } else {
-            i = _TryMergeXt(xtMergedList, xtList, i);
-        }
-    }
-}
-
-static void _MeargeXtList(List *xtList, List *xtMergedList) {
-    for (int i = 0; i < xtList->size; ++i) {
-        XtInfo *p = (XtInfo*) ListGet(xtList, i);
-        if (i == 0) {
-            ListAdd(xtMergedList, p);
-        } else {
-            i = _TryMergeXt(xtMergedList, xtList, i);
-        }
-    }
-}
-
-static void _CalcXt(List *xtList, int* mid, int len) {
-    XtInfo xi = {0};
-    for (int i = 0; i < len; ++i) {
-        if (xi.beginPos == 0) {
-            xi.beginPos = i;
-            xi.beginVal = mid[i];
-            continue;
-        }
-        if (xi.dir == 0) {
-            xi.endPos = i;
-            xi.endVal = mid[i];
-            xi.dir = GET_DIR(xi.beginVal, xi.endVal);
-            continue;
-        }
-        int dir = GET_DIR(xi.endVal, mid[i]);
-        if (xi.dir == dir) {
-            xi.endPos = i;
-            xi.endVal = mid[i];
-        } else {
-            ListAdd(xtList, &xi);
-            memset(&xi, 0, sizeof (XtInfo));
-            i -= 2;
-        }
-    }
-    if (xi.dir != 0) ListAdd(xtList, &xi);
-}
-
-struct _XtClass {
-    List *list;
-    List *mergedList;
-    int days;
-
-    int *mid;
-    int midLen;
-} XtObj;
-
-void BOOLXT_INIT_REF(int len, float* out, float* days, float* a, float* b) {
-    if (XtObj.list == NULL)
-        XtObj.list = ListNew(1500, sizeof (XtInfo));
-    if (XtObj.mergedList == NULL)
-        XtObj.mergedList = ListNew(1500, sizeof (XtInfo));
-    if (XtObj.mid == NULL)
-        XtObj.mid = (int*) malloc(sizeof (int) * 1500);
-    XtObj.midLen = 0;
-    ListClear(XtObj.list);
-    ListClear(XtObj.mergedList);
-    XtObj.days = (int) days[0];
-    XLOG("BOOLXT_INIT_REF len=%d days=%d", len, XtObj.days);
-}
-
-void BOLLXT_REF(int len, float* out, float* mid, float* close, float* dwn) {
-    if (len < 30) return;
-    int rlen = GET_MIN(len, XtObj.days);
-    XtObj.midLen = 0;
-    for (int i = 0, j = len - rlen, k = 0; i < rlen; ++i, ++j) {
-        if (mid[j] == 0)
-            continue;
-        XtObj.mid[k++] = (int) (mid[j] * 100);
-        ++XtObj.midLen;
-    }
-
-    _CalcXt(XtObj.list, XtObj.mid, XtObj.midLen);
-
-
-    /* sprinmid (buf, "\n---------Org------------");
-    Log(buf);
-    for (int i = 0; i < xtList->size; ++i) {
-            XtInfo *s = (XtInfo*)ListGet(xtList, i);
-            sprintf(buf, "Pos:[%d -> %d] [%.2f -> %.2f] | Dir:%d  ZF:%.2f",  s->beginPos-len+day, s->endPos-len+day, 
-                    s->beginVal, s->endVal, s->dir, (s->endVal - s->beginVal) * 100 / s->beginVal);
-            Log(buf);
-    } */
-
-    _MeargeXtList(XtObj.list, XtObj.mergedList);
-
-    XtInfo *s = (XtInfo*) ListGet(XtObj.list, 0);
-    for (int i = 0; i < len; ++i) {
-        out[i] = s->beginVal * 0.9;
-    }
-    for (int i = 0; i < XtObj.list->size; ++i) {
-        XtInfo *s = (XtInfo*) ListGet(XtObj.list, i);
-        out[s->beginPos] = s->beginVal;
-    }
-}
-
-void BOLLXT_mrg_test(int len, float* out, float* mid, float* days, float* c) {
-    int day = (int) days[0];
-
-    XtInfo *s = (XtInfo*) ListGet(XtObj.mergedList, 0);
-    float minVal = 1000;
-    for (int i = s->beginPos; i < len; ++i) {
-        if (minVal > mid[i]) minVal = mid[i];
-    }
-    minVal *= 0.9;
-    for (int i = 0; i < len; ++i) {
-        out[i] = minVal;
-    }
-
-    //sprintf(buf, "\n---------Mrg------------");
-    //Log(buf);
-    for (int i = 0; i < XtObj.mergedList->size; ++i) {
-        XtInfo *s = (XtInfo*) ListGet(XtObj.mergedList, i);
-        out[s->beginPos] = s->beginVal;
-        //sprintf(buf, "Pos:[%d -> %d] [%.2f -> %.2f] | Dir:%d  ZF:%.2f",  s->beginPos-len+day, s->endPos-len+day, 
-        //	s->beginVal, s->endVal, s->dir, (s->endVal - s->beginVal) * 100 / s->beginVal);
-        //Log(buf);
-    }
-}
-
-List *xtList3;
-
-void BOLLXT_3_test(int len, float* out, float* mid, float* days, float* dwn) {
-    if (xtList3 == NULL) xtList3 = ListNew(500, sizeof (XtInfo));
-    int day = (int) days[0];
-
-    ListClear(xtList3);
-    for (int i = 0; i < len; ++i) {
-        mid[i] = ceil(mid[i] * 100) / 100.0;
-    }
-    //_CalcXt(xtList3, mid, len);
-    for (int i = xtList3->size - 1, j = 0; i >= 0; --i, ++j) {
-        XtInfo *s = (XtInfo*) ListGet(xtList3, i);
-        out[len - 1 - j] = s->dir;
-    }
-}
-
 //------------------------------------------------------------------------------
-
 // 在指定的日期上， 是第几个交易日（以最近交易日为零开始算）
 // Eg: 如果当前日期是2016.8.19， 那么8.19就返回0； 8.18返回1
 // out = [日数] ; 假设date=[..., 2016.8.19] 而days=2016.8.20则 返回0
@@ -478,8 +285,7 @@ static void SetSortInfo(int len, int code, float val, int* firstIdx, List *list)
             t->next = info.idx;
             ListAdd(list, &info);
         } else {
-            sprintf(buf, "SetSortInfo Error: before = -1  code = %d val=%f", info.code, info.val);
-            XLog(buf);
+            printf("SetSortInfo Error: before = -1  code = %d val=%f", info.code, info.val);
         }
     }
 }
@@ -523,7 +329,6 @@ void GetSortInfo_REF(int len, float* out, float* code, float* id, float* c) {
 }
 
 //------------------------------------------------------------------------------
-
 struct _BOLLSK {
     float um[30]; // up - mid
     float ml[30]; // mid - low
@@ -576,7 +381,60 @@ void IsStepBackBollMid_REF(int len, float* out, float* close, float* mid, float*
             IsStepBackBollMid(len - 2, close, mid, low);
 }
 
-//------------------------------------------------------------------------------
+//--------------------金叉共振----------------------------------------------------------
+struct _GZInfoClass {
+	int days; // 参数：最近N日
+	int code; //代码
+	
+	int gzDays[10];
+	int gzDaysNum;
+    CRITICAL_SECTION mutex;
+} GZInfoObj;
+
+void CrossGZInit_REF(int len, float* out, float* a, float* b, float* id) {
+	if ((int)id[0] == 0) {
+		EnterCriticalSection(&GZInfoObj.mutex);
+		GZInfoObj.days = (int)a[0];
+		GZInfoObj.code = (int) b[0];
+		memset(&GZInfoObj.gzDays, 0, sizeof(GZInfoObj.gzDays));
+		GZInfoObj.gzDaysNum = 0;
+	} else if ((int)id[0] == 1) {
+		if (len < 30 || len <= GZInfoObj.days) return;
+		GZInfoObj.gzDays[GZInfoObj.gzDaysNum] = GetCrossAB(a, b, len - GZInfoObj.days - 1, len - 1);
+		++GZInfoObj.gzDaysNum;
+	}
+}
+
+void CrossGZ_REF(int len, float* out, float* a, float* b, float* c) {
+	int gz[20] = {0};
+	int gzNum = 0;
+	for (int i = 0; i < GZInfoObj.gzDaysNum; ++i) {
+		if (GZInfoObj.gzDays[i] <= 0) {
+			continue;
+		}
+		for (int j = 0; j <= gzNum; j += 2) {
+			if (j == gzNum) {
+				gz[gzNum] = GZInfoObj.gzDays[i];
+				gz[gzNum + 1] = 1;
+				gzNum += 2;
+				break;
+			}
+			if (GZInfoObj.gzDays[i] == gz[j]) {
+				++gz[j + 1];
+				break;
+			}
+		}
+	}
+	
+	int maxv = 0;
+	for (int j = 0; j < gzNum; j += 2) {
+		if (maxv < gz[j + 1]) {
+			maxv = gz[j + 1];
+		}
+	}
+	out[len - 1] = (float)maxv;
+	LeaveCriticalSection(&GZInfoObj.mutex);
+}
 
 struct {
     int witchDay; //哪一天 0,1,...  0:表示当日  1:昨日 ,...
@@ -667,20 +525,185 @@ _end:
 }
 
 //------------------------------------------------------------------------------
-extern void Download_REF(int len, float* out, float* in1, float* in2, float *ids);
+struct _Graphics {
+	HWND topWnd;
+	HWND kWnd;
+} GraphicsObj;
+// 在K线图上fill一个rect
+void FillRect_REF(int len, float* out, float* leftTop, float* widthHeight, float *color) {
+	if (GraphicsObj.topWnd == 0) {
+		GraphicsObj.topWnd = FindWindow("TdxW_MainFrame_Class", NULL);
+		HWND mdiClient = GetDlgItem(GraphicsObj.topWnd, 0xE900);
+		HWND ff01 = GetDlgItem(mdiClient, 0xFF01);
+		GraphicsObj.kWnd = GetDlgItem(ff01, 0xE900);
+	}
+	if (GraphicsObj.kWnd == 0)
+		return;
+	HDC dc = GetDC(GraphicsObj.kWnd);
+	int lt = (int)leftTop[0];
+	int wh = (int)widthHeight[0];
+	RECT r = {lt/1000, lt % 1000, wh/1000, wh%1000};
+	HBRUSH brsh = CreateSolidBrush((int)color[0]);
+	FillRect(dc, &r, brsh);
+	DeleteObject(brsh);
+	ReleaseDC(GraphicsObj.kWnd, dc);
+}
+
+//-----------------------------------------------------------------------------
+// 资金
+struct _ZJ {
+	void (*InitZJParam)(int id, int val);
+	void (*InitZJParamDate)(float* days, int len);
+	void (*CalcZJ)(float *out, int len);
+	void (*CalcZJAbs)(float *out, int len);
+	void (*GetZJMax)(float *out, int len);
+	void (*GetZJSum)(float *out, int len, int days, int zjType);
+	void (*GetThsPM)(int code, int *pm, int *num);
+	void (*GetLastZJ)(float *out, int len, int code, int dayNum);
+	int load;
+	HMODULE dll;
+} ZJObj;
+
+static void LoadTdxZJModule() {
+	if (ZJObj.load) return;
+	ZJObj.load = 1;
+	char buf[200];
+	sprintf(buf, "%s\\%s", GetDllPath(), "TdxZJ.dll");
+	HMODULE m = LoadLibrary(buf);
+	if (m == 0) return;
+	ZJObj.dll = m;
+	ZJObj.InitZJParam = GetProcAddress(m, "InitZJParam");
+	ZJObj.InitZJParamDate = GetProcAddress(m, "InitZJParamDate");
+	ZJObj.CalcZJ = GetProcAddress(m, "CalcZJ");
+	ZJObj.CalcZJAbs = GetProcAddress(m, "CalcZJAbs");
+	ZJObj.GetZJMax = GetProcAddress(m, "GetZJMax");
+	ZJObj.GetZJSum = GetProcAddress(m, "GetZJSum");
+	ZJObj.GetThsPM = GetProcAddress(m, "GetThsPM");
+	ZJObj.GetLastZJ = GetProcAddress(m, "GetLastZJ");
+}
+
+void UnloadTdxZJModule() {
+	if (ZJObj.dll) FreeLibrary(ZJObj.dll);
+}
+
+void TdxZJ_REF(int len, float* out, float* ids, float* vals, float *c) {
+	LoadTdxZJModule();
+	if (ZJObj.InitZJParam == 0) return;
+	int id = (int)ids[0];
+	if (id <= 4) {
+		int v = (int)vals[0];
+		ZJObj.InitZJParam(id, (int)vals[0]);
+	} else if (id == 5) {
+		ZJObj.InitZJParamDate(vals, len);
+	} else if (id == 10) {
+		ZJObj.CalcZJ(out, len);
+	} else if (id == 11) {
+		ZJObj.CalcZJAbs(out, len);
+	} else if (id == 12) {
+		ZJObj.GetZJMax(out, len);
+	} else if (id == 13) {
+		ZJObj.GetZJSum(out, len, (int)vals[0], (int)c[0]);
+	}
+}
+
+// 同花顺行业排名
+void THS_PM_REF(int len, float* out, float* code, float* b, float* c) {
+    int cc = (int) code[0];
+    int pm = 0, num = 0;
+    LoadTdxZJModule();
+	if (ZJObj.GetThsPM != 0) {
+		ZJObj.GetThsPM(cc, &pm, &num);
+	}
+    out[len-1] = pm;
+    out[len-2] = num;
+}
+
+void STRING_REF(int len, float* out, float* code, float* b, float* c) {
+	//OpenIO();
+	printf("STRING_REF: %x %f %d \n", code, code[len-1], (int)code[0]);
+	for (int i = 0; i < len; ++i) out[i] = code[i];
+}
+
+static BOOL _UpBBI(float bbi, float open, float close) {
+	if (bbi < 0.001 || open < 0.001 || close < 0.001)
+		return FALSE;
+	BOOL v = (bbi - close) * 100 / bbi <= 0.5;
+	if (close >= bbi) return TRUE;
+	if (open > bbi /*&& v*/) return TRUE;
+	return FALSE;
+}
+
+//在BBI线之上的天数
+void UpBBI_REF(int len, float* out, float* bbi, float* open, float* close) {
+	//OpenIO();
+	if (len < 250 * 3) {
+		// 小于三年的股票都不要
+		out[len - 1] = 0;
+	}
+	int n = 0;
+	for (int i = len - 1; i > 0; --i, ++n) {
+		//连续两天在BBI下
+		if (!_UpBBI(bbi[i], open[i], close[i]) && !_UpBBI(bbi[i - 1], open[i - 1], close[i - 1]))
+			break; 
+	}
+	out[len - 1] = n;
+}
+
+//DEA DIF 上0轴的天数
+void UpMACD_REF(int len, float* out, float* dif, float* dea, float* c) {
+	//OpenIO();
+	int n = 0;
+	for (int i = len - 1; i > 0; --i, ++n) {
+		if (dif[i] < 0 || dea[i] < 0) break;
+	}
+	out[len - 1] = n;
+}
+
+// 最近几日的流入资金
+void GetLastZJ_REF(int len, float* out, float* code, float* days, float* c) {
+	LoadTdxZJModule();
+	ZJObj.GetLastZJ(out, len, (int)code[0], (int)days[0]);
+}
+
+// MACD 0轴线上的第一次金叉 的日期  out = [num, day1, day2, ...]
+void GetMACDFirstCrossDay_REF(int len, float* out, float* dea, float* dif, float* date) {
+	int first = len;
+	for (int i = len - 1; i >= 0; --i) {
+		if (dea[i] < 0 || dif < 0) {
+			first = i;
+			break;
+		}
+	}
+	int k = 0;
+	for (int i = first; i < len - 1; ++i) {
+		out [i] = 0;
+		if (dif[i] < dea[i] && dif[i + 1] >= dea[i + 1]) {
+			out[ len - 2 - k] = ((int)date[i + 1]) % 10000 ;
+			++k;
+			++i;
+		}
+	}
+	out[len - 1] = k;
+}
 
 //------------------------------------------------------------------------------
-PluginTCalcFuncInfo g_CalcFuncSets[] ={
+extern void Download_REF(int len, float* out, float* in1, float* in2, float *ids);
+extern void BOLLXT_REF(int len, float* out, float* mid, float* close, float* dwn);
+extern void BOOLXT_INIT_REF(int len, float* out, float* days, float* a, float* b);
+//------------------------------------------------------------------------------
+PluginTCalcFuncInfo g_CalcFuncSets[] = {
+	{1, (pPluginFUNC) & BeginLock_REF},
+	{2, (pPluginFUNC) & EndLock_REF},
     {10, (pPluginFUNC) & Reset_REF},
     {11, (pPluginFUNC) & CrossInfo_REF},
 
     {20, (pPluginFUNC) & CalcMaxDF_REF},
     {21, (pPluginFUNC) & CalcMaxZF_REF},
 
-    {30, (pPluginFUNC) & BOLLXT_REF},
-    {31, (pPluginFUNC) & BOOLXT_INIT_REF},
-    {33, (pPluginFUNC) & BOLLXT_3_test}, // test
-    {34, (pPluginFUNC) & BOLLXT_mrg_test}, // test
+    //{30, (pPluginFUNC) & BOLLXT_REF},
+    //{31, (pPluginFUNC) & BOOLXT_INIT_REF},
+    //{33, (pPluginFUNC) & BOLLXT_3_test}, // test
+    //{34, (pPluginFUNC) & BOLLXT_mrg_test}, // test
 
     {40, (pPluginFUNC) & SetSortInfo_REF},
     {41, (pPluginFUNC) & GetSortInfo_REF},
@@ -692,12 +715,27 @@ PluginTCalcFuncInfo g_CalcFuncSets[] ={
     {70, (pPluginFUNC) & GPStart_REF},
     {71, (pPluginFUNC) & GPStartSetParam_REF},
     {72, (pPluginFUNC) & GPStartSetParam2_REF},
+    
+    {80, (pPluginFUNC) & CrossGZ_REF},
+    {81, (pPluginFUNC) & CrossGZInit_REF},
 
     {100, (pPluginFUNC) & CalcTradeDayInfo_REF},
     {101, (pPluginFUNC) & IsTradDay_REF},
     {102, (pPluginFUNC) & IsTP_REF},
     {103, (pPluginFUNC) & IsNFP_REF},
 
+	{110, (pPluginFUNC) & FillRect_REF},
+	
+	{120, (pPluginFUNC) & TdxZJ_REF},
+    {121, (pPluginFUNC) & THS_PM_REF},
+    {122, (pPluginFUNC) & STRING_REF},
+    
+    {130, (pPluginFUNC) & UpBBI_REF},
+    {131, (pPluginFUNC) & UpMACD_REF},
+    {132, (pPluginFUNC) & GetLastZJ_REF},
+    
+    {140, (pPluginFUNC) & GetMACDFirstCrossDay_REF},
+	
     {200, (pPluginFUNC) & Download_REF},
 
     {0, NULL},
@@ -710,7 +748,9 @@ DLLIMPORT BOOL RegisterTdxFunc(PluginTCalcFuncInfo** pFun) {
         InitializeCriticalSection(&si.mutex);
         InitializeCriticalSection(&bollSK.mutex);
         InitializeCriticalSection(&start.mutex);
-        //InitDownload();
+        InitializeCriticalSection(&GZInfoObj.mutex);
+        InitializeCriticalSection(&commMutex);
+    	//InitDownload();
         return TRUE;
     }
 
