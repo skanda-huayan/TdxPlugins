@@ -560,7 +560,14 @@ struct _ZJ {
 	void (*GetZJSum)(float *out, int len, int days, int zjType);
 	void (*GetThsPM)(int code, int *pm, int *num);
 	void (*GetLastZJ)(float *out, int len, int code, int dayNum);
+	void (*CalcHgtZJ)(float *out, int len);
+	void (*CalcHgtZJAbs)(float *out, int len);
+	
+	void* (*FetchEastMoneyZJ)(int code);
+	void (*CalcEastMoneyZJ)(void *task, float *out, float *days, int len);
+	void (*CalcEastMoneyZJAbs)(void *task, float *out, float *days, int len);
 	int load;
+	DWORD tlsIdx;
 	HMODULE dll;
 } ZJObj;
 
@@ -569,7 +576,7 @@ static void LoadTdxZJModule() {
 	ZJObj.load = 1;
 	char buf[200];
 	sprintf(buf, "%s\\%s", GetDllPath(), "TdxZJ.dll");
-	HMODULE m = LoadLibrary(buf);
+	HMODULE m = LoadLibraryEx(buf, NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
 	if (m == 0) return;
 	ZJObj.dll = m;
 	ZJObj.InitZJParam = GetProcAddress(m, "InitZJParam");
@@ -580,6 +587,12 @@ static void LoadTdxZJModule() {
 	ZJObj.GetZJSum = GetProcAddress(m, "GetZJSum");
 	ZJObj.GetThsPM = GetProcAddress(m, "GetThsPM");
 	ZJObj.GetLastZJ = GetProcAddress(m, "GetLastZJ");
+	ZJObj.CalcHgtZJ = GetProcAddress(m, "CalcHgtZJ");
+	ZJObj.CalcHgtZJAbs = GetProcAddress(m, "CalcHgtZJAbs");
+	ZJObj.FetchEastMoneyZJ = GetProcAddress(m, "FetchEastMoneyZJ");
+	ZJObj.CalcEastMoneyZJ = GetProcAddress(m, "CalcEastMoneyZJ");
+	ZJObj.CalcEastMoneyZJAbs = GetProcAddress(m, "CalcEastMoneyZJAbs");
+	ZJObj.tlsIdx = TlsAlloc();
 }
 
 void UnloadTdxZJModule() {
@@ -590,10 +603,10 @@ void TdxZJ_REF(int len, float* out, float* ids, float* vals, float *c) {
 	LoadTdxZJModule();
 	if (ZJObj.InitZJParam == 0) return;
 	int id = (int)ids[0];
-	if (id <= 4) {
+	if (id <= 6) {
 		int v = (int)vals[0];
 		ZJObj.InitZJParam(id, (int)vals[0]);
-	} else if (id == 5) {
+	} else if (id == 9) {
 		ZJObj.InitZJParamDate(vals, len);
 	} else if (id == 10) {
 		ZJObj.CalcZJ(out, len);
@@ -603,6 +616,26 @@ void TdxZJ_REF(int len, float* out, float* ids, float* vals, float *c) {
 		ZJObj.GetZJMax(out, len);
 	} else if (id == 13) {
 		ZJObj.GetZJSum(out, len, (int)vals[0], (int)c[0]);
+	} else if (id == 20) {
+		ZJObj.CalcHgtZJ(out, len);
+	} else if (id == 21) {
+		ZJObj.CalcHgtZJAbs(out, len);
+	}
+}
+
+void EastMoneyZJ_REF(int len, float* out, float* ids, float* vals, float *c) {
+	LoadTdxZJModule();
+	if (ZJObj.FetchEastMoneyZJ == 0) return;
+	int id = (int)ids[0];
+	if (id == 0) {
+		void *d = ZJObj.FetchEastMoneyZJ((int)vals[0]);
+		TlsSetValue(ZJObj.tlsIdx, d);
+	} else if (id == 1) {
+		void *d = TlsGetValue(ZJObj.tlsIdx);
+		ZJObj.CalcEastMoneyZJ(d, out, vals, len);
+	} else if (id == 2) {
+		void *d = TlsGetValue(ZJObj.tlsIdx);
+		ZJObj.CalcEastMoneyZJAbs(d, out, vals, len);
 	}
 }
 
@@ -686,6 +719,15 @@ void GetMACDFirstCrossDay_REF(int len, float* out, float* dea, float* dif, float
 	out[len - 1] = k;
 }
 
+void Download_Code_REF(int len, float* out, float* fcode, float* in2, float *ids) {
+	static FILE *f = NULL;
+	if (f == NULL) {
+		f = fopen("D:\\CPP\\GP\\gp.txt", "wb");
+	}
+	int cc = (int)fcode[0];
+	fwrite(&cc, sizeof(int), 1, f);
+}
+
 //------------------------------------------------------------------------------
 extern void Download_REF(int len, float* out, float* in1, float* in2, float *ids);
 extern void BOLLXT_REF(int len, float* out, float* mid, float* close, float* dwn);
@@ -729,6 +771,7 @@ PluginTCalcFuncInfo g_CalcFuncSets[] = {
 	{120, (pPluginFUNC) & TdxZJ_REF},
     {121, (pPluginFUNC) & THS_PM_REF},
     {122, (pPluginFUNC) & STRING_REF},
+    {123, (pPluginFUNC) & EastMoneyZJ_REF},
     
     {130, (pPluginFUNC) & UpBBI_REF},
     {131, (pPluginFUNC) & UpMACD_REF},
@@ -737,6 +780,8 @@ PluginTCalcFuncInfo g_CalcFuncSets[] = {
     {140, (pPluginFUNC) & GetMACDFirstCrossDay_REF},
 	
     {200, (pPluginFUNC) & Download_REF},
+    
+    {210, (pPluginFUNC) & Download_Code_REF},
 
     {0, NULL},
 };
