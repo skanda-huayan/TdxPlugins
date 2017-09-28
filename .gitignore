@@ -1,6 +1,5 @@
 *.a
 *.win
-*.dll
 *.layout
 *.o
 *.lnk
